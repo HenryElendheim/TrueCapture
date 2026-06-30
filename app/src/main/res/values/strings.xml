@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TrueCapture</string>
+    <string name="take_photo">Take Photo</string>
+    <string name="flip_camera">Flip</string>
+    <string name="flash_off">Flash: Off</string>
+    <string name="flash_on">Flash: On</string>
+    <string name="flash_auto">Flash: Auto</string>
+    <string name="photo_saved">Photo saved</string>
+    <string name="photo_failed">Could not save photo</string>
+    <string name="camera_start_failed">Could not start the camera</string>
+    <string name="camera_permission_needed">Camera permission is required to take photos</string>
+</resources>
