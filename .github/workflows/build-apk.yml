@@ -3,7 +3,7 @@ name: Build APK
 on:
   push:
     branches:
-      - claude/nothing-phone-camera-app-h58e9y
+      - Testing
   workflow_dispatch:
 
 jobs:
