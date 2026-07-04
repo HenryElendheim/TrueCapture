@@ -6,16 +6,21 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.hardware.camera2.CameraCharacteristics
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
@@ -34,7 +39,10 @@ import com.truecapture.app.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
+@OptIn(ExperimentalCamera2Interop::class)
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
@@ -44,18 +52,30 @@ class MainActivity : AppCompatActivity() {
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
 
-    private var lensFacing = CameraSelector.LENS_FACING_BACK
+    private var usingBack = true
     private var flashMode = ImageCapture.FLASH_MODE_OFF
     private var videoMode = false
     private var torchOn = false
+
+    // The physical lens (ultra-wide, main, tele) currently selected, or null
+    // for the camera's default lens. Lets the zoom bar switch real lenses.
+    private var lenses: List<Lens> = emptyList()
+    private var selectedLensId: String? = null
+    private var lensMode = false
 
     // Where photos and videos are saved. DCIM/Camera is the phone's normal
     // camera folder, so they show up directly in the gallery.
     private val cameraFolder = "DCIM/Camera"
 
-    // Zoom levels offered on the zoom bar. Only the ones the current camera
-    // actually supports are shown.
+    // Digital zoom steps used when a camera only has one physical lens.
     private val candidateZoomLevels = listOf(0.6f, 1f, 2f, 3f, 6f)
+
+    // A physical camera and how much it zooms compared with the main lens.
+    private data class Lens(
+        val id: String,
+        val relativeZoom: Float,
+        val selector: CameraSelector
+    )
 
     private val requestPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -108,27 +128,37 @@ class MainActivity : AppCompatActivity() {
                 it.setSurfaceProvider(binding.previewView.surfaceProvider)
             }
 
-            val cameraSelector = CameraSelector.Builder()
-                .requireLensFacing(lensFacing)
-                .build()
+            val baseSelector = if (usingBack) {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            } else {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            }
+            val selector = selectedLensId?.let { selectorForCameraId(it) } ?: baseSelector
 
             try {
                 cameraProvider.unbindAll()
                 camera = if (videoMode) {
-                    val recorder = Recorder.Builder()
-                        .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
-                        .build()
-                    videoCapture = VideoCapture.withOutput(recorder)
+                    // Reuse the recorder while filming so the camera can be
+                    // switched without ending the recording.
+                    val capture = if (recording != null && videoCapture != null) {
+                        videoCapture!!
+                    } else {
+                        val recorder = Recorder.Builder()
+                            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+                            .build()
+                        VideoCapture.withOutput(recorder).also { videoCapture = it }
+                    }
                     imageCapture = null
-                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, videoCapture)
+                    cameraProvider.bindToLifecycle(this, selector, preview, capture)
                 } else {
                     imageCapture = ImageCapture.Builder()
                         .setFlashMode(flashMode)
                         .build()
                     videoCapture = null
-                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
+                    cameraProvider.bindToLifecycle(this, selector, preview, imageCapture)
                 }
                 torchOn = false
+                lenses = computeLenses(cameraProvider, usingBack)
                 buildZoomBar()
                 updateButtons()
             } catch (e: Exception) {
@@ -218,18 +248,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun flipCamera() {
-        if (recording != null) return
-        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
-            CameraSelector.LENS_FACING_FRONT
-        } else {
-            CameraSelector.LENS_FACING_BACK
-        }
+        usingBack = !usingBack
+        selectedLensId = null
         startCamera()
     }
 
     private fun setVideoMode(video: Boolean) {
         if (recording != null || videoMode == video) return
         videoMode = video
+        selectedLensId = null
         startCamera()
     }
 
@@ -261,68 +288,173 @@ class MainActivity : AppCompatActivity() {
         }
         binding.shutterButton.setBackgroundResource(shutter)
 
-        // Flash button doubles as a light toggle while in video mode.
-        if (videoMode) {
-            binding.flashButton.setText(if (torchOn) R.string.light_on else R.string.light_off)
+        // Flash button shows a lightning symbol. In video mode it toggles the
+        // light (torch) instead of the photo flash.
+        val (icon, desc) = if (videoMode) {
+            if (torchOn) R.drawable.ic_flash_on to R.string.light_on
+            else R.drawable.ic_flash_off to R.string.light_off
         } else {
-            val flashLabel = when (flashMode) {
-                ImageCapture.FLASH_MODE_ON -> R.string.flash_on
-                ImageCapture.FLASH_MODE_AUTO -> R.string.flash_auto
-                else -> R.string.flash_off
+            when (flashMode) {
+                ImageCapture.FLASH_MODE_ON -> R.drawable.ic_flash_on to R.string.flash_on
+                ImageCapture.FLASH_MODE_AUTO -> R.drawable.ic_flash_auto to R.string.flash_auto
+                else -> R.drawable.ic_flash_off to R.string.flash_off
             }
-            binding.flashButton.setText(flashLabel)
         }
+        binding.flashButton.setImageResource(icon)
+        binding.flashButton.contentDescription = getString(desc)
     }
+
+    // --- Zoom bar -----------------------------------------------------------
 
     private fun buildZoomBar() {
-        val zoomState = camera?.cameraInfo?.zoomState?.value ?: return
-        val min = zoomState.minZoomRatio
-        val max = zoomState.maxZoomRatio
-        val levels = candidateZoomLevels.filter { it in min..max }
-
         binding.zoomBar.removeAllViews()
-        for (level in levels) {
-            val item = TextView(this).apply {
-                text = zoomLabel(level)
-                setTextColor(Color.WHITE)
-                textSize = 14f
-                gravity = Gravity.CENTER
-                minWidth = dp(40)
-                val padV = dp(6)
-                setPadding(dp(6), padV, dp(6), padV)
-                isClickable = true
-                tag = level
-                setOnClickListener {
-                    camera?.cameraControl?.setZoomRatio(level)
-                    highlightZoom(level)
+
+        if (lenses.size >= 2) {
+            lensMode = true
+            val currentId = selectedLensId ?: mainLensId()
+            for (lens in lenses) {
+                val chip = makeZoomChip(zoomLabel(lens.relativeZoom))
+                setChipSelected(chip, lens.id == currentId)
+                chip.setOnClickListener {
+                    if (selectedLensId != lens.id) {
+                        selectedLensId = lens.id
+                        startCamera()
+                    }
                 }
+                binding.zoomBar.addView(chip)
             }
-            binding.zoomBar.addView(item)
+            binding.zoomBar.visibility = View.VISIBLE
+            return
         }
-        highlightZoom(zoomState.zoomRatio)
+
+        // One physical lens: fall back to digital zoom steps.
+        lensMode = false
+        val zoomState = camera?.cameraInfo?.zoomState?.value
+        if (zoomState == null) {
+            binding.zoomBar.visibility = View.GONE
+            return
+        }
+        val levels = candidateZoomLevels.filter { it in zoomState.minZoomRatio..zoomState.maxZoomRatio }
+        if (levels.size < 2) {
+            binding.zoomBar.visibility = View.GONE
+            return
+        }
+        for (level in levels) {
+            val chip = makeZoomChip(zoomLabel(level))
+            chip.tag = level
+            chip.setOnClickListener {
+                camera?.cameraControl?.setZoomRatio(level)
+                highlightDigital(level)
+            }
+            binding.zoomBar.addView(chip)
+        }
+        binding.zoomBar.visibility = View.VISIBLE
+        highlightDigital(zoomState.zoomRatio)
     }
 
-    private fun highlightZoom(ratio: Float) {
+    private fun highlightDigital(ratio: Float) {
         for (i in 0 until binding.zoomBar.childCount) {
-            val item = binding.zoomBar.getChildAt(i) as TextView
-            val level = item.tag as Float
-            val selected = abs(level - ratio) < 0.05f
-            item.background = if (selected) {
-                ContextCompat.getDrawable(this, R.drawable.bg_zoom_selected)
-            } else {
-                null
-            }
-            item.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            val chip = binding.zoomBar.getChildAt(i) as TextView
+            val level = chip.tag as? Float ?: continue
+            setChipSelected(chip, abs(level - ratio) < 0.05f)
         }
     }
 
-    private fun zoomLabel(level: Float): String {
-        return when {
-            level == 1f -> "1×"
-            level % 1f == 0f -> level.toInt().toString()
-            else -> level.toString()
+    private fun makeZoomChip(label: String): TextView {
+        return TextView(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            minWidth = dp(40)
+            val padV = dp(6)
+            setPadding(dp(6), padV, dp(6), padV)
+            isClickable = true
         }
     }
+
+    private fun setChipSelected(chip: TextView, selected: Boolean) {
+        chip.background = if (selected) {
+            ContextCompat.getDrawable(this, R.drawable.bg_zoom_selected)
+        } else {
+            null
+        }
+        chip.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+    }
+
+    private fun mainLensId(): String? {
+        return lenses.minByOrNull { abs(it.relativeZoom - 1f) }?.id
+    }
+
+    private fun zoomLabel(z: Float): String {
+        return when {
+            abs(z - 1f) < 0.06f -> "1×"
+            z < 1f -> String.format(Locale.US, "%.1f", z)
+            abs(z - z.roundToInt()) < 0.12f -> z.roundToInt().toString()
+            else -> String.format(Locale.US, "%.1f", z)
+        }
+    }
+
+    // --- Physical lens discovery -------------------------------------------
+
+    private fun selectorForCameraId(id: String): CameraSelector {
+        return CameraSelector.Builder().addCameraFilter { infos ->
+            infos.filter { Camera2CameraInfo.from(it).cameraId == id }
+        }.build()
+    }
+
+    private fun computeLenses(provider: ProcessCameraProvider, back: Boolean): List<Lens> {
+        return try {
+            val facing = if (back) {
+                CameraSelector.LENS_FACING_BACK
+            } else {
+                CameraSelector.LENS_FACING_FRONT
+            }
+            val infos = provider.availableCameraInfos.filter {
+                runCatching { it.lensFacing == facing }.getOrDefault(false)
+            }
+            if (infos.size < 2) return emptyList()
+
+            val baseSelector = if (back) {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            } else {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            }
+            val mainInfo = baseSelector.filter(infos).firstOrNull() ?: return emptyList()
+            val mainEquiv = equivFocalLength(mainInfo) ?: return emptyList()
+
+            val lenses = infos.mapNotNull { info ->
+                val equiv = equivFocalLength(info) ?: return@mapNotNull null
+                val id = Camera2CameraInfo.from(info).cameraId
+                Lens(id, equiv / mainEquiv, selectorForCameraId(id))
+            }
+                .filter { it.relativeZoom in 0.3f..12f }
+                .sortedBy { it.relativeZoom }
+                .distinctBy { zoomLabel(it.relativeZoom) }
+
+            if (lenses.size < 2) emptyList() else lenses
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun equivFocalLength(info: CameraInfo): Float? {
+        return try {
+            val c2 = Camera2CameraInfo.from(info)
+            val focal = c2.getCameraCharacteristic(
+                CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+            )?.firstOrNull() ?: return null
+            val size = c2.getCameraCharacteristic(
+                CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
+            ) ?: return null
+            val diagonal = sqrt(size.width * size.width + size.height * size.height)
+            if (diagonal <= 0f) null else focal * (43.2666f / diagonal)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // --- Touch: tap to focus, pinch to zoom --------------------------------
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setUpTouchControls() {
@@ -333,7 +465,9 @@ class MainActivity : AppCompatActivity() {
                 val target = (state.zoomRatio * detector.scaleFactor)
                     .coerceIn(state.minZoomRatio, state.maxZoomRatio)
                 control.setZoomRatio(target)
-                highlightZoom(target)
+                if (!lensMode) {
+                    highlightDigital(target)
+                }
                 return true
             }
         }

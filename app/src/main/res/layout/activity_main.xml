@@ -14,12 +14,16 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <Button
+    <ImageButton
         android:id="@+id/flashButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
         android:layout_margin="16dp"
-        android:text="@string/flash_off"
+        android:padding="10dp"
+        android:background="@drawable/bg_round_button"
+        android:src="@drawable/ic_flash_off"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/flash_off"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
