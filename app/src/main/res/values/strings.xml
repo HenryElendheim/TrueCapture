@@ -10,4 +10,12 @@
     <string name="photo_failed">Could not save photo</string>
     <string name="camera_start_failed">Could not start the camera</string>
     <string name="camera_permission_needed">Camera permission is required to take photos</string>
+    <string name="mode_photo">Photo</string>
+    <string name="mode_video">Video</string>
+    <string name="record">Record</string>
+    <string name="stop">Stop</string>
+    <string name="video_saved">Video saved</string>
+    <string name="video_failed">Could not save video</string>
+    <string name="light_on">Light: On</string>
+    <string name="light_off">Light: Off</string>
 </resources>

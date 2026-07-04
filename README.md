@@ -7,11 +7,13 @@ to your phone. Nothing else.
 
 - Live camera preview
 - Take a photo with one button
+- Record video (switch between Photo and Video with the mode button)
 - Switch between the back and front camera
-- Flash off, on, or auto
+- Flash off, on, or auto for photos, and a light toggle for video
 - Tap the screen to focus
 - Pinch to zoom
-- Photos are saved to your gallery in the `Pictures/TrueCapture` folder
+- Photos and videos are saved to the `DCIM/Camera` folder, so they appear
+  directly in your gallery alongside your other pictures
 
 ## Installing it on your phone
 
