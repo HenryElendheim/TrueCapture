@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -21,9 +22,9 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
-import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
@@ -67,24 +68,25 @@ class MainActivity : AppCompatActivity() {
     // settings menu so lens problems can be diagnosed.
     private var lensDiagnostic = ""
 
-    // The physical lens (ultra-wide, main, tele) currently selected, or null
-    // for the camera's default lens. Lets the zoom bar switch real lenses.
+    // The physical lens (ultra-wide, main, tele) currently selected. null means
+    // the camera's default (main) lens. Lets the zoom bar switch real lenses.
     private var lenses: List<Lens> = emptyList()
-    private var selectedLensId: String? = null
+    private var selectedPhysicalId: String? = null
     private var lensMode = false
 
     // Where photos and videos are saved. DCIM/Camera is the phone's normal
     // camera folder, so they show up directly in the gallery.
     private val cameraFolder = "DCIM/Camera"
 
-    // Digital zoom steps used when a camera only has one physical lens.
+    // Digital zoom steps used when a camera only exposes one lens.
     private val candidateZoomLevels = listOf(0.6f, 1f, 2f, 3f, 6f)
 
-    // A physical camera and how much it zooms compared with the main lens.
+    // A selectable lens. physicalId is the Camera2 physical camera id to bind,
+    // or null for the main (logical) camera. relativeZoom is how much it zooms
+    // compared with the main lens.
     private data class Lens(
-        val id: String,
-        val relativeZoom: Float,
-        val selector: CameraSelector
+        val physicalId: String?,
+        val relativeZoom: Float
     )
 
     private val requestPermissions =
@@ -138,20 +140,26 @@ class MainActivity : AppCompatActivity() {
             runCatching { recording?.pause() }
         }
 
+        // Physical lens overrides only apply to the back camera.
+        val physId = if (usingBack) selectedPhysicalId else null
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
 
-            val preview = Preview.Builder().build().also {
+            val previewBuilder = Preview.Builder()
+            if (physId != null) {
+                Camera2Interop.Extender(previewBuilder).setPhysicalCameraId(physId)
+            }
+            val preview = previewBuilder.build().also {
                 it.setSurfaceProvider(binding.previewView.surfaceProvider)
             }
 
-            val baseSelector = if (usingBack) {
+            val selector = if (usingBack) {
                 CameraSelector.DEFAULT_BACK_CAMERA
             } else {
                 CameraSelector.DEFAULT_FRONT_CAMERA
             }
-            val selector = selectedLensId?.let { selectorForCameraId(it) } ?: baseSelector
 
             try {
                 cameraProvider.unbindAll()
@@ -169,17 +177,21 @@ class MainActivity : AppCompatActivity() {
                                 )
                             )
                             .build()
-                        VideoCapture.Builder(recorder)
+                        val vcBuilder = VideoCapture.Builder(recorder)
                             .setTargetFrameRate(Range(frameRate, frameRate))
-                            .build()
-                            .also { videoCapture = it }
+                        if (physId != null) {
+                            Camera2Interop.Extender(vcBuilder).setPhysicalCameraId(physId)
+                        }
+                        vcBuilder.build().also { videoCapture = it }
                     }
                     imageCapture = null
                     cameraProvider.bindToLifecycle(this, selector, preview, capture)
                 } else {
-                    imageCapture = ImageCapture.Builder()
-                        .setFlashMode(flashMode)
-                        .build()
+                    val icBuilder = ImageCapture.Builder().setFlashMode(flashMode)
+                    if (physId != null) {
+                        Camera2Interop.Extender(icBuilder).setPhysicalCameraId(physId)
+                    }
+                    imageCapture = icBuilder.build()
                     videoCapture = null
                     cameraProvider.bindToLifecycle(this, selector, preview, imageCapture)
                 }
@@ -187,18 +199,33 @@ class MainActivity : AppCompatActivity() {
                 if (switchingWhileRecording) {
                     runCatching { recording?.resume() }
                 }
-                lenses = computeLenses(cameraProvider, usingBack)
+                // Work out the physical lenses only when on the main lens of the
+                // back camera; keep the list while a specific lens is selected.
+                if (usingBack && selectedPhysicalId == null) {
+                    val logicalId = runCatching {
+                        Camera2CameraInfo.from(camera!!.cameraInfo).cameraId
+                    }.getOrNull()
+                    lenses = computeBackLenses(logicalId)
+                } else if (!usingBack) {
+                    lenses = emptyList()
+                }
                 buildZoomBar()
                 updateButtons()
             } catch (e: Exception) {
-                // If the switch failed, stop the recording so the video that
-                // was captured so far is still saved rather than lost.
                 if (switchingWhileRecording) {
                     runCatching { recording?.stop() }
                     recording = null
                     updateButtons()
                 }
-                Toast.makeText(this, R.string.camera_start_failed, Toast.LENGTH_LONG).show()
+                if (physId != null) {
+                    // The chosen lens could not be opened. Fall back to the main
+                    // lens so the preview keeps working.
+                    selectedPhysicalId = null
+                    Toast.makeText(this, R.string.lens_unavailable, Toast.LENGTH_SHORT).show()
+                    startCamera()
+                } else {
+                    Toast.makeText(this, R.string.camera_start_failed, Toast.LENGTH_LONG).show()
+                }
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -292,14 +319,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun flipCamera() {
         usingBack = !usingBack
-        selectedLensId = null
+        selectedPhysicalId = null
         startCamera()
     }
 
     private fun setVideoMode(video: Boolean) {
         if (recording != null || videoMode == video) return
         videoMode = video
-        selectedLensId = null
+        selectedPhysicalId = null
         startCamera()
     }
 
@@ -380,13 +407,13 @@ class MainActivity : AppCompatActivity() {
 
         if (lenses.size >= 2) {
             lensMode = true
-            val currentId = selectedLensId ?: mainLensId()
             for (lens in lenses) {
                 val chip = makeZoomChip(zoomLabel(lens.relativeZoom))
-                setChipSelected(chip, lens.id == currentId)
+                setChipSelected(chip, lens.physicalId == selectedPhysicalId)
                 chip.setOnClickListener {
-                    if (selectedLensId != lens.id) {
-                        selectedLensId = lens.id
+                    if (recording != null) return@setOnClickListener
+                    if (lens.physicalId != selectedPhysicalId) {
+                        selectedPhysicalId = lens.physicalId
                         startCamera()
                     }
                 }
@@ -451,10 +478,6 @@ class MainActivity : AppCompatActivity() {
         chip.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
     }
 
-    private fun mainLensId(): String? {
-        return lenses.minByOrNull { abs(it.relativeZoom - 1f) }?.id
-    }
-
     private fun zoomLabel(z: Float): String {
         return when {
             abs(z - 1f) < 0.06f -> "1×"
@@ -466,78 +489,79 @@ class MainActivity : AppCompatActivity() {
 
     // --- Physical lens discovery -------------------------------------------
 
-    private fun selectorForCameraId(id: String): CameraSelector {
-        return CameraSelector.Builder().addCameraFilter { infos ->
-            infos.filter { Camera2CameraInfo.from(it).cameraId == id }
-        }.build()
-    }
-
-    private fun computeLenses(provider: ProcessCameraProvider, back: Boolean): List<Lens> {
+    // Find the ultra-wide, main, and telephoto lenses that make up the back
+    // camera. On most phones these are physical sub-cameras of one logical
+    // camera, reachable through Camera2's physical camera ids.
+    private fun computeBackLenses(logicalId: String?): List<Lens> {
+        lensDiagnostic = ""
+        if (logicalId == null) return emptyList()
         return try {
-            val facing = if (back) {
-                CameraSelector.LENS_FACING_BACK
+            val cm = getSystemService(CameraManager::class.java) ?: return emptyList()
+            val physicalIds = cm.getCameraCharacteristics(logicalId).physicalCameraIds.toList()
+
+            if (physicalIds.isEmpty()) {
+                // Single-lens logical camera. Report the top-level cameras so a
+                // missing lens can still be diagnosed.
+                lensDiagnostic = topLevelDiagnostic(cm)
+                return emptyList()
+            }
+
+            val entries = physicalIds.mapNotNull { id ->
+                equivFocalLength(cm, id)?.let { id to it }
+            }
+            lensDiagnostic = "Lenses: " + if (entries.isEmpty()) {
+                "$physicalIds (no focal data)"
             } else {
-                CameraSelector.LENS_FACING_FRONT
+                entries.joinToString(", ") { (id, equiv) -> "#$id ${equiv.roundToInt()}mm" }
             }
-            val infos = provider.availableCameraInfos.filter { infoFacing(it) == facing }
-
-            // Each camera's id and 35mm-equivalent focal length.
-            val data = infos.mapNotNull { info ->
-                val id = runCatching { Camera2CameraInfo.from(info).cameraId }.getOrNull()
-                    ?: return@mapNotNull null
-                Triple(info, id, equivFocalLength(info))
-            }
-
-            if (back) {
-                lensDiagnostic = if (data.isEmpty()) {
-                    "Cameras: none found"
-                } else {
-                    "Cameras: " + data.joinToString(", ") { (_, id, equiv) ->
-                        "#$id " + (equiv?.let { "${it.roundToInt()}mm" } ?: "?")
-                    }
-                }
-            }
-
-            val withFocal = data.mapNotNull { (info, id, equiv) ->
-                equiv?.let { Triple(info, id, it) }
-            }
-            if (withFocal.size < 2) return emptyList()
+            if (entries.size < 2) return emptyList()
 
             // Main lens = the shortest focal length that is not an ultra-wide
             // (18mm or longer). Every lens is measured relative to it.
-            val mainEquiv = withFocal.map { it.third }.filter { it >= 18f }.minOrNull()
-                ?: withFocal.minOf { it.third }
+            val mainEquiv = entries.map { it.second }.filter { it >= 18f }.minOrNull()
+                ?: entries.minOf { it.second }
 
-            val lenses = withFocal.map { (_, id, equiv) ->
-                Lens(id, equiv / mainEquiv, selectorForCameraId(id))
+            val result = mutableListOf(Lens(null, 1f)) // main = logical camera
+            for ((id, equiv) in entries) {
+                val ratio = equiv / mainEquiv
+                if (abs(ratio - 1f) < 0.12f) continue      // this is the main lens
+                if (ratio !in 0.3f..12f) continue
+                result.add(Lens(id, ratio))
             }
-                .filter { it.relativeZoom in 0.3f..12f }
-                .sortedBy { it.relativeZoom }
-                .distinctBy { zoomLabel(it.relativeZoom) }
 
-            if (lenses.size < 2) emptyList() else lenses
+            result.sortedBy { it.relativeZoom }
+                .distinctBy { zoomLabel(it.relativeZoom) }
+                .let { if (it.size < 2) emptyList() else it }
         } catch (e: Exception) {
             emptyList()
         }
     }
 
-    private fun infoFacing(info: CameraInfo): Int? {
-        runCatching { return info.lensFacing }
-        return runCatching {
-            Camera2CameraInfo.from(info)
-                .getCameraCharacteristic(CameraCharacteristics.LENS_FACING)
-        }.getOrNull()
+    private fun topLevelDiagnostic(cm: CameraManager): String {
+        return try {
+            "Cameras: " + cm.cameraIdList.joinToString(", ") { id ->
+                val facing = when (
+                    cm.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING)
+                ) {
+                    CameraCharacteristics.LENS_FACING_BACK -> "B"
+                    CameraCharacteristics.LENS_FACING_FRONT -> "F"
+                    else -> "?"
+                }
+                val focal = equivFocalLength(cm, id)?.roundToInt()?.let { "${it}mm" } ?: "?"
+                "#$id$facing $focal"
+            }
+        } catch (e: Exception) {
+            "Cameras: unavailable"
+        }
     }
 
-    private fun equivFocalLength(info: CameraInfo): Float? {
+    private fun equivFocalLength(cm: CameraManager, id: String): Float? {
         return try {
-            val c2 = Camera2CameraInfo.from(info)
-            val focal = c2.getCameraCharacteristic(
+            val c = cm.getCameraCharacteristics(id)
+            val focal = c.get(
                 CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
             )?.firstOrNull() ?: return null
-            val size = c2.getCameraCharacteristic(
-                CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
-            ) ?: return null
+            val size = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return null
             val diagonal = sqrt(size.width * size.width + size.height * size.height)
             if (diagonal <= 0f) null else focal * (43.2666f / diagonal)
         } catch (e: Exception) {
