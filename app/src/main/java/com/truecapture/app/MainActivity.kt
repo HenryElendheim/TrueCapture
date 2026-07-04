@@ -27,6 +27,8 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.ExperimentalPersistentRecording
+import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -42,7 +44,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-@OptIn(ExperimentalCamera2Interop::class)
+@OptIn(ExperimentalCamera2Interop::class, ExperimentalPersistentRecording::class)
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
@@ -120,6 +122,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCamera() {
+        // If a recording is running this is a camera switch. Pause it across
+        // the rebind so the persistent recording keeps the same file.
+        val switchingWhileRecording = recording != null
+        if (switchingWhileRecording) {
+            runCatching { recording?.pause() }
+        }
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
@@ -140,11 +149,16 @@ class MainActivity : AppCompatActivity() {
                 camera = if (videoMode) {
                     // Reuse the recorder while filming so the camera can be
                     // switched without ending the recording.
-                    val capture = if (recording != null && videoCapture != null) {
+                    val capture = if (switchingWhileRecording && videoCapture != null) {
                         videoCapture!!
                     } else {
                         val recorder = Recorder.Builder()
-                            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+                            .setQualitySelector(
+                                QualitySelector.fromOrderedList(
+                                    listOf(Quality.FHD, Quality.HD, Quality.SD),
+                                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                                )
+                            )
                             .build()
                         VideoCapture.withOutput(recorder).also { videoCapture = it }
                     }
@@ -158,10 +172,20 @@ class MainActivity : AppCompatActivity() {
                     cameraProvider.bindToLifecycle(this, selector, preview, imageCapture)
                 }
                 torchOn = false
+                if (switchingWhileRecording) {
+                    runCatching { recording?.resume() }
+                }
                 lenses = computeLenses(cameraProvider, usingBack)
                 buildZoomBar()
                 updateButtons()
             } catch (e: Exception) {
+                // If the switch failed, stop the recording so the video that
+                // was captured so far is still saved rather than lost.
+                if (switchingWhileRecording) {
+                    runCatching { recording?.stop() }
+                    recording = null
+                    updateButtons()
+                }
                 Toast.makeText(this, R.string.camera_start_failed, Toast.LENGTH_LONG).show()
             }
         }, ContextCompat.getMainExecutor(this))
@@ -232,6 +256,9 @@ class MainActivity : AppCompatActivity() {
         if (hasAudioPermission()) {
             pending = pending.withAudioEnabled()
         }
+        // Persistent so the recording keeps going (same file) when the camera
+        // is switched mid-recording.
+        pending = pending.asPersistentRecording()
 
         recording = pending.start(ContextCompat.getMainExecutor(this)) { event ->
             when (event) {

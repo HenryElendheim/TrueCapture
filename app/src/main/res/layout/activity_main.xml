@@ -16,15 +16,16 @@
 
     <ImageButton
         android:id="@+id/flashButton"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_margin="16dp"
-        android:padding="10dp"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_marginStart="32dp"
+        android:padding="12dp"
         android:background="@drawable/bg_round_button"
         android:src="@drawable/ic_flash_off"
         android:scaleType="fitCenter"
         android:contentDescription="@string/flash_off"
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintTop_toTopOf="@id/shutterButton"
+        app:layout_constraintBottom_toBottomOf="@id/shutterButton"
         app:layout_constraintStart_toStartOf="parent" />
 
     <LinearLayout
