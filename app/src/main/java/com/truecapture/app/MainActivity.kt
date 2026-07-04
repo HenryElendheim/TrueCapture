@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.hardware.camera2.CameraCharacteristics
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
@@ -262,8 +263,12 @@ class MainActivity : AppCompatActivity() {
 
         recording = pending.start(ContextCompat.getMainExecutor(this)) { event ->
             when (event) {
-                is VideoRecordEvent.Start -> updateButtons()
+                is VideoRecordEvent.Start -> {
+                    startTimer()
+                    updateButtons()
+                }
                 is VideoRecordEvent.Finalize -> {
+                    stopTimer()
                     val message = if (event.hasError()) R.string.video_failed else R.string.video_saved
                     Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                     recording = null
@@ -515,6 +520,17 @@ class MainActivity : AppCompatActivity() {
         val point = binding.previewView.meteringPointFactory.createPoint(x, y)
         val action = FocusMeteringAction.Builder(point).build()
         control.startFocusAndMetering(action)
+    }
+
+    private fun startTimer() {
+        binding.recordTimer.base = SystemClock.elapsedRealtime()
+        binding.recordTimer.start()
+        binding.recordIndicator.visibility = View.VISIBLE
+    }
+
+    private fun stopTimer() {
+        binding.recordTimer.stop()
+        binding.recordIndicator.visibility = View.GONE
     }
 
     private fun timeStamp(): String {
