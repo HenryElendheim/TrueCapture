@@ -64,10 +64,6 @@ class MainActivity : AppCompatActivity() {
     private var torchOn = false
     private var frameRate = 30
 
-    // A short description of the back cameras the phone exposes, shown in the
-    // settings menu so lens problems can be diagnosed.
-    private var lensDiagnostic = ""
-
     // The physical lens (ultra-wide, main, tele) currently selected. null means
     // the camera's default (main) lens. Lets the zoom bar switch real lenses.
     private var lenses: List<Lens> = emptyList()
@@ -336,9 +332,6 @@ class MainActivity : AppCompatActivity() {
         popup.menu.add(0, 60, 1, getString(R.string.fps_60))
         popup.menu.setGroupCheckable(0, true, true)
         popup.menu.findItem(frameRate)?.isChecked = true
-        if (lensDiagnostic.isNotEmpty()) {
-            popup.menu.add(1, 100, 2, lensDiagnostic).isEnabled = false
-        }
         popup.setOnMenuItemClickListener { item ->
             setFrameRate(item.itemId)
             true
@@ -493,26 +486,14 @@ class MainActivity : AppCompatActivity() {
     // camera. On most phones these are physical sub-cameras of one logical
     // camera, reachable through Camera2's physical camera ids.
     private fun computeBackLenses(logicalId: String?): List<Lens> {
-        lensDiagnostic = ""
         if (logicalId == null) return emptyList()
         return try {
             val cm = getSystemService(CameraManager::class.java) ?: return emptyList()
             val physicalIds = cm.getCameraCharacteristics(logicalId).physicalCameraIds.toList()
-
-            if (physicalIds.isEmpty()) {
-                // Single-lens logical camera. Report the top-level cameras so a
-                // missing lens can still be diagnosed.
-                lensDiagnostic = topLevelDiagnostic(cm)
-                return emptyList()
-            }
+            if (physicalIds.isEmpty()) return emptyList()
 
             val entries = physicalIds.mapNotNull { id ->
                 equivFocalLength(cm, id)?.let { id to it }
-            }
-            lensDiagnostic = "Lenses: " + if (entries.isEmpty()) {
-                "$physicalIds (no focal data)"
-            } else {
-                entries.joinToString(", ") { (id, equiv) -> "#$id ${equiv.roundToInt()}mm" }
             }
             if (entries.size < 2) return emptyList()
 
@@ -534,24 +515,6 @@ class MainActivity : AppCompatActivity() {
                 .let { if (it.size < 2) emptyList() else it }
         } catch (e: Exception) {
             emptyList()
-        }
-    }
-
-    private fun topLevelDiagnostic(cm: CameraManager): String {
-        return try {
-            "Cameras: " + cm.cameraIdList.joinToString(", ") { id ->
-                val facing = when (
-                    cm.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING)
-                ) {
-                    CameraCharacteristics.LENS_FACING_BACK -> "B"
-                    CameraCharacteristics.LENS_FACING_FRONT -> "F"
-                    else -> "?"
-                }
-                val focal = equivFocalLength(cm, id)?.roundToInt()?.let { "${it}mm" } ?: "?"
-                "#$id$facing $focal"
-            }
-        } catch (e: Exception) {
-            "Cameras: unavailable"
         }
     }
 
