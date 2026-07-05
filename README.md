@@ -12,6 +12,10 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-073763" alt="License: MIT"></a>
+</p>
+
 ---
 
 ## Why
@@ -69,3 +73,8 @@ The finished app is at `app/build/outputs/apk/debug/app-debug.apk`.
   photo capture, and video recording
 - A single screen, saved to the gallery through `MediaStore`
 - No third-party analytics, accounts, or network access
+
+## License
+
+Elendheim Capture is released under the [MIT License](LICENSE). You are free to
+use, change, and share it, including in your own projects.
