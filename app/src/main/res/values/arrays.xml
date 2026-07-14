@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string-array name="frame_rate_entries">
+        <item>30 fps</item>
+        <item>60 fps</item>
+    </string-array>
+    <string-array name="frame_rate_values">
+        <item>30</item>
+        <item>60</item>
+    </string-array>
+
+    <string-array name="flash_color_entries">
+        <item>White</item>
+        <item>Warm</item>
+        <item>Red</item>
+        <item>Green</item>
+        <item>Blue</item>
+        <item>Purple</item>
+    </string-array>
+    <string-array name="flash_color_values">
+        <item>#FFFFFF</item>
+        <item>#FFE4B5</item>
+        <item>#FF5252</item>
+        <item>#69F0AE</item>
+        <item>#448AFF</item>
+        <item>#B388FF</item>
+    </string-array>
+
+</resources>

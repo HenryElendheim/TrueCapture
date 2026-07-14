@@ -56,6 +56,9 @@ jobs:
         with:
           tag_name: latest
           name: Latest build
+          body: |
+            Elendheim Capture is a simple camera for Android.
+            It takes photos, records video, and saves them straight to your gallery.
           files: ElendheimCapture.apk
 
       - name: Publish a versioned release
@@ -65,4 +68,7 @@ jobs:
           tag_name: ${{ inputs.version }}
           name: Elendheim Capture ${{ inputs.version }}
           target_commitish: ${{ github.sha }}
+          body: |
+            Elendheim Capture is a simple camera for Android.
+            It takes photos, records video, and saves them straight to your gallery.
           files: ElendheimCapture.apk

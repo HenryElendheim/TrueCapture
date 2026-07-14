@@ -3,6 +3,7 @@ package com.truecapture.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -10,13 +11,15 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Bundle
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.MediaStore
 import android.util.Range
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +44,7 @@ import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
+import androidx.preference.PreferenceManager
 import com.truecapture.app.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -62,7 +66,15 @@ class MainActivity : AppCompatActivity() {
     private var flashMode = ImageCapture.FLASH_MODE_OFF
     private var videoMode = false
     private var torchOn = false
+
+    // Settings, read from the settings screen.
     private var frameRate = 30
+    private var frontFlashColor = Color.WHITE
+    private var shutterAnimation = true
+    private var hapticCapture = true
+    private var volumeCapture = false
+    private var gridLines = false
+    private var largeControls = false
 
     // The physical lens (ultra-wide, main, tele) currently selected. null means
     // the camera's default (main) lens. Lets the zoom bar switch real lenses.
@@ -104,8 +116,10 @@ class MainActivity : AppCompatActivity() {
         binding.flashButton.setOnClickListener { onFlashButton() }
         binding.modePhoto.setOnClickListener { setVideoMode(false) }
         binding.modeVideo.setOnClickListener { setVideoMode(true) }
-        binding.settingsButton.setOnClickListener { showFrameRateMenu() }
+        binding.settingsButton.setOnClickListener { openSettings() }
 
+        loadSettings()
+        applyStaticSettings()
         setUpTouchControls()
         updateButtons()
 
@@ -115,6 +129,94 @@ class MainActivity : AppCompatActivity() {
             requestPermissions.launch(
                 arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
             )
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val previousRate = frameRate
+        loadSettings()
+        applyStaticSettings()
+        // If the frame rate changed in settings, rebind so it takes effect.
+        if (frameRate != previousRate && recording == null && camera != null) {
+            startCamera()
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (volumeCapture &&
+            (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+        ) {
+            onShutter()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun openSettings() {
+        startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    private fun loadSettings() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        frameRate = (prefs.getString("frame_rate", "30") ?: "30").toIntOrNull() ?: 30
+        frontFlashColor = runCatching {
+            Color.parseColor(prefs.getString("front_flash_color", "#FFFFFF"))
+        }.getOrDefault(Color.WHITE)
+        shutterAnimation = prefs.getBoolean("shutter_animation", true)
+        hapticCapture = prefs.getBoolean("haptic_capture", true)
+        volumeCapture = prefs.getBoolean("volume_capture", false)
+        gridLines = prefs.getBoolean("grid_lines", false)
+        largeControls = prefs.getBoolean("large_controls", false)
+    }
+
+    private fun applyStaticSettings() {
+        binding.gridOverlay.visibility = if (gridLines) View.VISIBLE else View.GONE
+        binding.vignetteOverlay.setVignetteColor(frontFlashColor)
+        applyControlSizes()
+        updateVignette()
+    }
+
+    private fun applyControlSizes() {
+        val shutter = if (largeControls) dp(96) else dp(76)
+        binding.shutterButton.layoutParams = binding.shutterButton.layoutParams.apply {
+            width = shutter
+            height = shutter
+        }
+        val side = if (largeControls) dp(64) else dp(52)
+        for (button in listOf(binding.flipButton, binding.flashButton)) {
+            button.layoutParams = button.layoutParams.apply {
+                width = side
+                height = side
+            }
+        }
+        binding.shutterButton.requestLayout()
+    }
+
+    // The selfie camera has no real flash, so glow the screen corners instead.
+    private fun updateVignette() {
+        val frontFlashOn = !usingBack &&
+            (if (videoMode) torchOn else flashMode != ImageCapture.FLASH_MODE_OFF)
+        binding.vignetteOverlay.visibility = if (frontFlashOn) View.VISIBLE else View.GONE
+    }
+
+    private fun playShutterEffect() {
+        if (!shutterAnimation) return
+        val overlay = binding.shutterOverlay
+        overlay.alpha = 1f
+        overlay.visibility = View.VISIBLE
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(160)
+            .withEndAction { overlay.visibility = View.GONE }
+            .start()
+    }
+
+    private fun vibrateOnCapture() {
+        if (!hapticCapture) return
+        val vibrator = getSystemService(Vibrator::class.java) ?: return
+        runCatching {
+            vibrator.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 
@@ -237,6 +339,9 @@ class MainActivity : AppCompatActivity() {
     private fun takePhoto() {
         val capture = imageCapture ?: return
 
+        playShutterEffect()
+        vibrateOnCapture()
+
         val name = timeStamp()
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -326,26 +431,6 @@ class MainActivity : AppCompatActivity() {
         startCamera()
     }
 
-    private fun showFrameRateMenu() {
-        val popup = PopupMenu(this, binding.settingsButton)
-        popup.menu.add(0, 30, 0, getString(R.string.fps_30))
-        popup.menu.add(0, 60, 1, getString(R.string.fps_60))
-        popup.menu.setGroupCheckable(0, true, true)
-        popup.menu.findItem(frameRate)?.isChecked = true
-        popup.setOnMenuItemClickListener { item ->
-            setFrameRate(item.itemId)
-            true
-        }
-        popup.show()
-    }
-
-    private fun setFrameRate(fps: Int) {
-        if (fps != 30 && fps != 60) return
-        if (recording != null || fps == frameRate) return
-        frameRate = fps
-        startCamera()
-    }
-
     private fun onFlashButton() {
         if (videoMode) {
             torchOn = !torchOn
@@ -366,8 +451,8 @@ class MainActivity : AppCompatActivity() {
         binding.modePhoto.setTypeface(null, if (videoMode) Typeface.NORMAL else Typeface.BOLD)
         binding.modeVideo.setTypeface(null, if (videoMode) Typeface.BOLD else Typeface.NORMAL)
 
-        // The frame-rate cog is only relevant while recording video.
-        binding.settingsButton.visibility = if (videoMode) View.VISIBLE else View.GONE
+        // Update the selfie-camera corner glow to match the flash state.
+        updateVignette()
 
         // Shutter button graphic.
         val shutter = when {

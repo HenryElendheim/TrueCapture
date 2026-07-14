@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="Camera">
+
+        <ListPreference
+            app:key="frame_rate"
+            app:title="Video frame rate"
+            app:entries="@array/frame_rate_entries"
+            app:entryValues="@array/frame_rate_values"
+            app:defaultValue="30"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            app:key="front_flash_color"
+            app:title="Front flash colour"
+            app:summary="Screen glow used as a flash on the selfie camera"
+            app:entries="@array/flash_color_entries"
+            app:entryValues="@array/flash_color_values"
+            app:defaultValue="#FFFFFF"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Accessibility">
+
+        <SwitchPreferenceCompat
+            app:key="shutter_animation"
+            app:title="Shutter animation"
+            app:summary="Briefly dim the screen when a photo is taken"
+            app:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            app:key="haptic_capture"
+            app:title="Vibrate on capture"
+            app:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            app:key="volume_capture"
+            app:title="Volume keys take a photo"
+            app:defaultValue="false" />
+
+        <SwitchPreferenceCompat
+            app:key="grid_lines"
+            app:title="Grid lines"
+            app:summary="Show a rule of thirds grid over the preview"
+            app:defaultValue="false" />
+
+        <SwitchPreferenceCompat
+            app:key="large_controls"
+            app:title="Large controls"
+            app:summary="Bigger buttons that are easier to tap"
+            app:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Settings backup">
+
+        <Preference
+            app:key="export_settings"
+            app:title="Export settings to a file" />
+
+        <Preference
+            app:key="import_settings"
+            app:title="Import settings from a file" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

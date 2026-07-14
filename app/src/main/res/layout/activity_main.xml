@@ -14,6 +14,29 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Rule of thirds grid, shown when the grid setting is on. -->
+    <View
+        android:id="@+id/gridOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@drawable/grid"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Corner glow used as a flash for the selfie camera. -->
+    <com.truecapture.app.VignetteView
+        android:id="@+id/vignetteOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <LinearLayout
         android:id="@+id/recordIndicator"
         android:layout_width="wrap_content"
@@ -44,6 +67,20 @@
 
     </LinearLayout>
 
+    <!-- Settings gear, top right. Opens the settings screen. -->
+    <ImageButton
+        android:id="@+id/settingsButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_margin="16dp"
+        android:padding="10dp"
+        android:background="@drawable/bg_round_button"
+        android:src="@drawable/ic_settings"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/settings"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <ImageButton
         android:id="@+id/flashButton"
         android:layout_width="52dp"
@@ -69,21 +106,6 @@
         android:layout_marginBottom="16dp"
         app:layout_constraintBottom_toTopOf="@id/modeRow"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <ImageButton
-        android:id="@+id/settingsButton"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:padding="10dp"
-        android:layout_marginEnd="24dp"
-        android:layout_marginBottom="16dp"
-        android:background="@drawable/bg_round_button"
-        android:src="@drawable/ic_settings"
-        android:scaleType="fitCenter"
-        android:contentDescription="@string/settings"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/modeRow"
         app:layout_constraintEnd_toEndOf="parent" />
 
     <LinearLayout
@@ -141,6 +163,19 @@
         android:contentDescription="@string/flip_camera"
         app:layout_constraintTop_toTopOf="@id/shutterButton"
         app:layout_constraintBottom_toBottomOf="@id/shutterButton"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Black overlay flashed briefly when a photo is taken (shutter effect). -->
+    <View
+        android:id="@+id/shutterOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@android:color/black"
+        android:alpha="0"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
