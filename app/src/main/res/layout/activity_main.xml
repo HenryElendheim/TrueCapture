@@ -5,27 +5,29 @@
     android:layout_height="match_parent"
     android:background="@android:color/black">
 
+    <!-- Placement (box vs full screen) is set in code per photo or video. -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:implementationMode="compatible"
+        app:layout_constraintVertical_bias="0.22"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Rule of thirds grid, shown when the grid setting is on. -->
+    <!-- Rule of thirds grid, lined up with the camera image. -->
     <View
         android:id="@+id/gridOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="@drawable/grid"
         android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintTop_toTopOf="@id/previewView"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView" />
 
     <!-- Corner glow used as a flash for the selfie camera. -->
     <com.truecapture.app.VignetteView
@@ -206,12 +208,26 @@
         app:layout_constraintBottom_toBottomOf="@id/shutterButton"
         app:layout_constraintStart_toEndOf="@id/flipButton" />
 
+    <!-- Full screen catcher. While the editor is open this sits behind it and
+         eats any taps, so nothing behind the panel can be pressed. -->
+    <View
+        android:id="@+id/editorScrim"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#66000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Custom filter editor. Sliders update the preview live. -->
-    <LinearLayout
+    <ScrollView
         android:id="@+id/filterEditor"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
         android:background="#F0121212"
         android:padding="16dp"
         android:visibility="gone"
@@ -219,95 +235,130 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <EditText
-            android:id="@+id/filterName"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Filter name"
-            android:inputType="textCapWords"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#888888"
-            android:autofillHints="name" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="Warmth"
-            android:textColor="#FFFFFF" />
-
-        <SeekBar
-            android:id="@+id/warmthSlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="50"
-            android:contentDescription="Warmth" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Brightness"
-            android:textColor="#FFFFFF" />
-
-        <SeekBar
-            android:id="@+id/brightnessSlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="50"
-            android:contentDescription="Brightness" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Saturation"
-            android:textColor="#FFFFFF" />
-
-        <SeekBar
-            android:id="@+id/saturationSlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="200"
-            android:progress="100"
-            android:contentDescription="Saturation" />
-
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:orientation="vertical">
 
-            <Button
-                android:id="@+id/deleteFilter"
-                style="?attr/borderlessButtonStyle"
+            <EditText
+                android:id="@+id/filterName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Filter name"
+                android:inputType="textCapWords"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#888888"
+                android:autofillHints="name" />
+
+            <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Delete"
-                android:textColor="#FF5252" />
+                android:layout_marginTop="12dp"
+                android:text="Warmth"
+                android:textColor="#FFFFFF" />
 
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
+            <SeekBar
+                android:id="@+id/warmthSlider"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50"
+                android:contentDescription="Warmth" />
 
-            <Button
-                android:id="@+id/cancelFilter"
-                style="?attr/borderlessButtonStyle"
+            <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Cancel" />
+                android:text="Tint"
+                android:textColor="#FFFFFF" />
 
-            <Button
-                android:id="@+id/saveFilter"
+            <SeekBar
+                android:id="@+id/tintSlider"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50"
+                android:contentDescription="Tint" />
+
+            <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Save" />
+                android:text="Brightness"
+                android:textColor="#FFFFFF" />
+
+            <SeekBar
+                android:id="@+id/brightnessSlider"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50"
+                android:contentDescription="Brightness" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contrast"
+                android:textColor="#FFFFFF" />
+
+            <SeekBar
+                android:id="@+id/contrastSlider"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50"
+                android:contentDescription="Contrast" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Saturation"
+                android:textColor="#FFFFFF" />
+
+            <SeekBar
+                android:id="@+id/saturationSlider"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="200"
+                android:progress="100"
+                android:contentDescription="Saturation" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <Button
+                    android:id="@+id/deleteFilter"
+                    style="?attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Delete"
+                    android:textColor="#FF5252" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <Button
+                    android:id="@+id/cancelFilter"
+                    style="?attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Cancel" />
+
+                <Button
+                    android:id="@+id/saveFilter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Save" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
-    </LinearLayout>
+    </ScrollView>
 
     <!-- Black overlay flashed briefly when a photo is taken (shutter effect). -->
     <View

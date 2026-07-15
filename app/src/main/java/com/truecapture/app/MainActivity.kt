@@ -49,6 +49,7 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.camera.video.ExperimentalPersistentRecording
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.MediaStoreOutputOptions
@@ -146,10 +147,9 @@ class MainActivity : AppCompatActivity() {
         binding.deleteFilter.setOnClickListener { deleteFilterEditor() }
         setUpEditorSliders()
 
-        // Show the full camera view (not a zoomed in crop) so the preview
-        // matches the saved photo. The image sits at the top -> the buttons
-        // below it sit over black, not over the shot.
-        binding.previewView.scaleType = PreviewView.ScaleType.FIT_START
+        // Place the preview: a 4:3 box in the upper-middle for photos, full
+        // screen for video. Done in code so it can change with the mode.
+        applyPreviewLayout()
 
         loadSettings()
         applyStaticSettings()
@@ -234,6 +234,28 @@ class MainActivity : AppCompatActivity() {
         binding.shutterButton.requestLayout()
     }
 
+    // Where the live preview sits. In photo mode it is a 4:3 box pushed down
+    // from the top so there is black above it and it feels centred, matching
+    // the shape of the saved photo. In video mode it fills the whole screen,
+    // which feels more natural for filming.
+    private fun applyPreviewLayout() {
+        val lp = binding.previewView.layoutParams as ConstraintLayout.LayoutParams
+        if (videoMode) {
+            lp.width = 0
+            lp.height = 0
+            lp.verticalBias = 0.5f
+            binding.previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        } else {
+            // 4:3 box as tall as the screen is wide (times 4/3), nudged down
+            // from the top so the top strip stays black.
+            lp.width = 0
+            lp.height = (resources.displayMetrics.widthPixels * 4f / 3f).toInt()
+            lp.verticalBias = 0.22f
+            binding.previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+        binding.previewView.layoutParams = lp
+    }
+
     // The selfie camera has no real flash, so glow the screen corners instead.
     private fun updateVignette() {
         val frontFlashOn = !usingBack &&
@@ -286,10 +308,13 @@ class MainActivity : AppCompatActivity() {
             }
             binding.filterBar.addView(chip)
         }
-        // A plus chip to build your own filter.
-        val add = makeFilterChip("+")
-        add.setOnClickListener { openFilterEditor(null) }
-        binding.filterBar.addView(add)
+        // A plus chip to build your own filter. It disappears once the picker
+        // is full (ten filters) and comes back after a custom one is deleted.
+        if (filters.size < Filters.MAX_FILTERS) {
+            val add = makeFilterChip("+")
+            add.setOnClickListener { openFilterEditor(null) }
+            binding.filterBar.addView(add)
+        }
     }
 
     private fun makeFilterChip(label: String): TextView {
@@ -336,7 +361,9 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         }
         binding.warmthSlider.setOnSeekBarChangeListener(listener)
+        binding.tintSlider.setOnSeekBarChangeListener(listener)
         binding.brightnessSlider.setOnSeekBarChangeListener(listener)
+        binding.contrastSlider.setOnSeekBarChangeListener(listener)
         binding.saturationSlider.setOnSeekBarChangeListener(listener)
     }
 
@@ -347,16 +374,24 @@ class MainActivity : AppCompatActivity() {
 
     // editIndex is the position within the custom filters, or null for a new one.
     private fun openFilterEditor(editIndex: Int?) {
+        // Adding a new filter is blocked once the picker is full.
+        if (editIndex == null && filters.size >= Filters.MAX_FILTERS) return
         editingIndex = editIndex
         val params = editIndex?.let { customParams.getOrNull(it) }
         binding.filterName.setText(params?.name ?: "")
         binding.warmthSlider.progress = (((params?.warmth ?: 0f) + 50f).toInt()).coerceIn(0, 100)
+        binding.tintSlider.progress = (((params?.tint ?: 0f) + 50f).toInt()).coerceIn(0, 100)
         binding.brightnessSlider.progress =
             (((params?.brightness ?: 0f) + 50f).toInt()).coerceIn(0, 100)
+        binding.contrastSlider.progress =
+            ((((params?.contrast ?: 1f) - 0.5f) * 100f).toInt()).coerceIn(0, 100)
         binding.saturationSlider.progress =
             (((params?.saturation ?: 1f) * 100f).toInt()).coerceIn(0, 200)
         binding.deleteFilter.visibility = if (editIndex != null) View.VISIBLE else View.GONE
         binding.filterScroll.visibility = View.GONE
+        // The scrim sits behind the panel and swallows taps meant for the
+        // buttons underneath, so nothing behind the editor can be pressed.
+        binding.editorScrim.visibility = View.VISIBLE
         binding.filterEditor.visibility = View.VISIBLE
         applyLiveFilter()
     }
@@ -366,7 +401,10 @@ class MainActivity : AppCompatActivity() {
         return CustomParams(
             name,
             (binding.warmthSlider.progress - 50).toFloat(),
+            (binding.tintSlider.progress - 50).toFloat(),
             (binding.brightnessSlider.progress - 50).toFloat(),
+            // Contrast runs 0.5 (flat) to 1.5 (punchy), with the middle at 1.
+            0.5f + binding.contrastSlider.progress / 100f,
             binding.saturationSlider.progress / 100f
         )
     }
@@ -413,6 +451,7 @@ class MainActivity : AppCompatActivity() {
     private fun closeFilterEditor() {
         editingIndex = null
         binding.filterEditor.visibility = View.GONE
+        binding.editorScrim.visibility = View.GONE
         binding.filterScroll.visibility = View.VISIBLE
         applyPreviewFilter()
         populateFilterPanel()
@@ -710,6 +749,7 @@ class MainActivity : AppCompatActivity() {
         if (recording != null || videoMode == video) return
         videoMode = video
         selectedPhysicalId = null
+        applyPreviewLayout()
         startCamera()
     }
 

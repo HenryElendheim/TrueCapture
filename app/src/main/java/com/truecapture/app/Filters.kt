@@ -5,10 +5,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 // The slider values behind a custom filter, kept so it can be edited later.
+// warmth and tint and brightness are roughly -50..50, contrast is 0.5..1.5,
+// saturation is 0 (grey) to 2 (punchy).
 data class CustomParams(
     val name: String,
     val warmth: Float,
+    val tint: Float,
     val brightness: Float,
+    val contrast: Float,
     val saturation: Float
 )
 
@@ -21,6 +25,9 @@ data class Filter(
 )
 
 object Filters {
+
+    // At most this many filters in the picker (built-in plus custom).
+    const val MAX_FILTERS = 10
 
     // The five built-in looks, plus the untouched original.
     val standard: List<Filter> = listOf(
@@ -62,26 +69,46 @@ object Filters {
         Filter("Vivid", ColorMatrix().apply { setSaturation(1.6f) })
     )
 
-    // Build the colour matrix for a set of slider values. warmth and brightness
-    // are roughly -50 to 50, saturation is 0 (grey) to 2 (punchy).
-    fun matrixFor(params: CustomParams): ColorMatrix {
+    // How many custom filters are allowed on top of the built-in ones.
+    fun customLimit(): Int = MAX_FILTERS - standard.size
+
+    // Build the colour matrix for a set of slider values.
+    fun matrixFor(p: CustomParams): ColorMatrix {
         val cm = ColorMatrix()
-        cm.setSaturation(params.saturation)
-        val warmAndBright = ColorMatrix(
-            floatArrayOf(
-                1f, 0f, 0f, 0f, params.warmth + params.brightness,
-                0f, 1f, 0f, 0f, params.brightness,
-                0f, 0f, 1f, 0f, -params.warmth + params.brightness,
-                0f, 0f, 0f, 1f, 0f
+        cm.setSaturation(p.saturation)
+
+        // Contrast pivots around mid grey.
+        val c = p.contrast
+        val offset = 128f * (1f - c)
+        cm.postConcat(
+            ColorMatrix(
+                floatArrayOf(
+                    c, 0f, 0f, 0f, offset,
+                    0f, c, 0f, 0f, offset,
+                    0f, 0f, c, 0f, offset,
+                    0f, 0f, 0f, 1f, 0f
+                )
             )
         )
-        cm.postConcat(warmAndBright)
+
+        // Warmth shifts red vs blue, tint shifts green vs magenta, brightness
+        // lifts everything.
+        cm.postConcat(
+            ColorMatrix(
+                floatArrayOf(
+                    1f, 0f, 0f, 0f, p.warmth + p.tint + p.brightness,
+                    0f, 1f, 0f, 0f, -p.tint + p.brightness,
+                    0f, 0f, 1f, 0f, -p.warmth + p.tint + p.brightness,
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
+        )
         return cm
     }
 
     fun toFilter(params: CustomParams): Filter = Filter(params.name, matrixFor(params), params)
 
-    // Read the saved custom filters.
+    // Read the saved custom filters. Older saves may not have tint or contrast.
     fun loadCustom(json: String?): List<CustomParams> {
         if (json.isNullOrEmpty()) return emptyList()
         return try {
@@ -90,9 +117,11 @@ object Filters {
                 val o = array.getJSONObject(i)
                 CustomParams(
                     o.getString("name"),
-                    o.getDouble("warmth").toFloat(),
-                    o.getDouble("brightness").toFloat(),
-                    o.getDouble("saturation").toFloat()
+                    o.optDouble("warmth", 0.0).toFloat(),
+                    o.optDouble("tint", 0.0).toFloat(),
+                    o.optDouble("brightness", 0.0).toFloat(),
+                    o.optDouble("contrast", 1.0).toFloat(),
+                    o.optDouble("saturation", 1.0).toFloat()
                 )
             }
         } catch (e: Exception) {
@@ -100,7 +129,6 @@ object Filters {
         }
     }
 
-    // Turn a list of custom filters back into JSON for storage.
     fun toJson(list: List<CustomParams>): String {
         val array = JSONArray()
         for (p in list) {
@@ -108,7 +136,9 @@ object Filters {
                 JSONObject()
                     .put("name", p.name)
                     .put("warmth", p.warmth.toDouble())
+                    .put("tint", p.tint.toDouble())
                     .put("brightness", p.brightness.toDouble())
+                    .put("contrast", p.contrast.toDouble())
                     .put("saturation", p.saturation.toDouble())
             )
         }
