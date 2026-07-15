@@ -4,9 +4,21 @@ import android.graphics.ColorMatrix
 import org.json.JSONArray
 import org.json.JSONObject
 
-// A colour look. matrix == null means the original photo (no change). The same
-// look is used for the live preview and baked into the saved photo.
-data class Filter(val name: String, val matrix: ColorMatrix?)
+// The slider values behind a custom filter, kept so it can be edited later.
+data class CustomParams(
+    val name: String,
+    val warmth: Float,
+    val brightness: Float,
+    val saturation: Float
+)
+
+// A colour look. matrix == null means the original photo (no change). params is
+// set only for custom filters, so they can be edited or removed.
+data class Filter(
+    val name: String,
+    val matrix: ColorMatrix?,
+    val params: CustomParams? = null
+)
 
 object Filters {
 
@@ -50,31 +62,33 @@ object Filters {
         Filter("Vivid", ColorMatrix().apply { setSaturation(1.6f) })
     )
 
-    // Build a look from three simple sliders. warmth and brightness are roughly
-    // -50 to 50, saturation is 0 (grey) to 2 (punchy).
-    fun custom(name: String, warmth: Float, brightness: Float, saturation: Float): Filter {
+    // Build the colour matrix for a set of slider values. warmth and brightness
+    // are roughly -50 to 50, saturation is 0 (grey) to 2 (punchy).
+    fun matrixFor(params: CustomParams): ColorMatrix {
         val cm = ColorMatrix()
-        cm.setSaturation(saturation)
+        cm.setSaturation(params.saturation)
         val warmAndBright = ColorMatrix(
             floatArrayOf(
-                1f, 0f, 0f, 0f, warmth + brightness,
-                0f, 1f, 0f, 0f, brightness,
-                0f, 0f, 1f, 0f, -warmth + brightness,
+                1f, 0f, 0f, 0f, params.warmth + params.brightness,
+                0f, 1f, 0f, 0f, params.brightness,
+                0f, 0f, 1f, 0f, -params.warmth + params.brightness,
                 0f, 0f, 0f, 1f, 0f
             )
         )
         cm.postConcat(warmAndBright)
-        return Filter(name, cm)
+        return cm
     }
 
-    // Load the user's saved custom filters from the stored JSON.
-    fun loadCustom(json: String?): List<Filter> {
+    fun toFilter(params: CustomParams): Filter = Filter(params.name, matrixFor(params), params)
+
+    // Read the saved custom filters.
+    fun loadCustom(json: String?): List<CustomParams> {
         if (json.isNullOrEmpty()) return emptyList()
         return try {
             val array = JSONArray(json)
             (0 until array.length()).map { i ->
                 val o = array.getJSONObject(i)
-                custom(
+                CustomParams(
                     o.getString("name"),
                     o.getDouble("warmth").toFloat(),
                     o.getDouble("brightness").toFloat(),
@@ -86,26 +100,18 @@ object Filters {
         }
     }
 
-    // Add one custom filter to the stored JSON and return the new JSON string.
-    fun appendCustom(
-        json: String?,
-        name: String,
-        warmth: Float,
-        brightness: Float,
-        saturation: Float
-    ): String {
-        val array = try {
-            if (json.isNullOrEmpty()) JSONArray() else JSONArray(json)
-        } catch (e: Exception) {
-            JSONArray()
+    // Turn a list of custom filters back into JSON for storage.
+    fun toJson(list: List<CustomParams>): String {
+        val array = JSONArray()
+        for (p in list) {
+            array.put(
+                JSONObject()
+                    .put("name", p.name)
+                    .put("warmth", p.warmth.toDouble())
+                    .put("brightness", p.brightness.toDouble())
+                    .put("saturation", p.saturation.toDouble())
+            )
         }
-        array.put(
-            JSONObject()
-                .put("name", name)
-                .put("warmth", warmth.toDouble())
-                .put("brightness", brightness.toDouble())
-                .put("saturation", saturation.toDouble())
-        )
         return array.toString()
     }
 }

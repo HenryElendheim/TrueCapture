@@ -30,13 +30,10 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import android.widget.EditText
-import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.exifinterface.media.ExifInterface
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -48,7 +45,10 @@ import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.camera.video.ExperimentalPersistentRecording
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.MediaStoreOutputOptions
@@ -96,6 +96,8 @@ class MainActivity : AppCompatActivity() {
     // Colour filters. The list is the built-in looks plus any custom ones.
     private var filters: List<Filter> = Filters.standard
     private var currentFilterIndex = 0
+    private var customParams: MutableList<CustomParams> = mutableListOf()
+    private var editingIndex: Int? = null
 
     // The physical lens (ultra-wide, main, tele) currently selected. null means
     // the camera's default (main) lens. Lets the zoom bar switch real lenses.
@@ -139,6 +141,15 @@ class MainActivity : AppCompatActivity() {
         binding.modeVideo.setOnClickListener { setVideoMode(true) }
         binding.settingsButton.setOnClickListener { openSettings() }
         binding.filterButton.setOnClickListener { toggleFilterPanel() }
+        binding.saveFilter.setOnClickListener { saveFilterEditor() }
+        binding.cancelFilter.setOnClickListener { cancelFilterEditor() }
+        binding.deleteFilter.setOnClickListener { deleteFilterEditor() }
+        setUpEditorSliders()
+
+        // Show the full camera view (not a zoomed in crop) so the preview
+        // matches the saved photo. The image sits at the top -> the buttons
+        // below it sit over black, not over the shot.
+        binding.previewView.scaleType = PreviewView.ScaleType.FIT_START
 
         loadSettings()
         applyStaticSettings()
@@ -195,8 +206,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun reloadFilters() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        filters = Filters.standard + Filters.loadCustom(prefs.getString("custom_filters", null))
-        if (currentFilterIndex >= filters.size) currentFilterIndex = 0
+        customParams = Filters.loadCustom(prefs.getString("custom_filters", null)).toMutableList()
+        rebuildFilterList()
     }
 
     private fun applyStaticSettings() {
@@ -266,11 +277,18 @@ class MainActivity : AppCompatActivity() {
             val chip = makeFilterChip(filter.name)
             setChipSelected(chip, index == currentFilterIndex)
             chip.setOnClickListener { selectFilter(index) }
+            // Long press a custom filter to edit or remove it.
+            if (filter.params != null) {
+                chip.setOnLongClickListener {
+                    editFilter(index)
+                    true
+                }
+            }
             binding.filterBar.addView(chip)
         }
         // A plus chip to build your own filter.
         val add = makeFilterChip("+")
-        add.setOnClickListener { showCustomFilterDialog() }
+        add.setOnClickListener { openFilterEditor(null) }
         binding.filterBar.addView(add)
     }
 
@@ -306,62 +324,109 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun showCustomFilterDialog() {
-        val pad = dp(16)
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, 0)
-        }
-        val nameInput = EditText(this).apply {
-            hint = "Filter name"
-            contentDescription = "Filter name"
-        }
-        container.addView(nameInput)
-        // Sliders sit at the middle by default, so no change until you move them.
-        val warmth = addSlider(container, "Warmth", 100, 50)
-        val brightness = addSlider(container, "Brightness", 100, 50)
-        val saturation = addSlider(container, "Saturation", 200, 100)
+    // --- Custom filter editor (live) ---------------------------------------
 
-        AlertDialog.Builder(this)
-            .setTitle("Custom filter")
-            .setView(container)
-            .setPositiveButton("Save") { _, _ ->
-                val name = nameInput.text.toString().ifBlank { "Custom" }
-                addCustomFilter(
-                    name,
-                    (warmth.progress - 50).toFloat(),
-                    (brightness.progress - 50).toFloat(),
-                    saturation.progress / 100f
-                )
+    private fun setUpEditorSliders() {
+        val listener = object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (binding.filterEditor.visibility == View.VISIBLE) applyLiveFilter()
             }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
 
-    private fun addSlider(parent: LinearLayout, label: String, max: Int, start: Int): SeekBar {
-        parent.addView(TextView(this).apply {
-            text = label
-            setPadding(0, dp(12), 0, 0)
-        })
-        val slider = SeekBar(this).apply {
-            this.max = max
-            progress = start
-            contentDescription = label
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         }
-        parent.addView(slider)
-        return slider
+        binding.warmthSlider.setOnSeekBarChangeListener(listener)
+        binding.brightnessSlider.setOnSeekBarChangeListener(listener)
+        binding.saturationSlider.setOnSeekBarChangeListener(listener)
     }
 
-    private fun addCustomFilter(name: String, warmth: Float, brightness: Float, saturation: Float) {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        val json = Filters.appendCustom(
-            prefs.getString("custom_filters", null), name, warmth, brightness, saturation
+    private fun editFilter(filterIndex: Int) {
+        val customIndex = filterIndex - Filters.standard.size
+        if (customIndex in customParams.indices) openFilterEditor(customIndex)
+    }
+
+    // editIndex is the position within the custom filters, or null for a new one.
+    private fun openFilterEditor(editIndex: Int?) {
+        editingIndex = editIndex
+        val params = editIndex?.let { customParams.getOrNull(it) }
+        binding.filterName.setText(params?.name ?: "")
+        binding.warmthSlider.progress = (((params?.warmth ?: 0f) + 50f).toInt()).coerceIn(0, 100)
+        binding.brightnessSlider.progress =
+            (((params?.brightness ?: 0f) + 50f).toInt()).coerceIn(0, 100)
+        binding.saturationSlider.progress =
+            (((params?.saturation ?: 1f) * 100f).toInt()).coerceIn(0, 200)
+        binding.deleteFilter.visibility = if (editIndex != null) View.VISIBLE else View.GONE
+        binding.filterScroll.visibility = View.GONE
+        binding.filterEditor.visibility = View.VISIBLE
+        applyLiveFilter()
+    }
+
+    private fun editorParams(): CustomParams {
+        val name = binding.filterName.text.toString().ifBlank { "Custom" }
+        return CustomParams(
+            name,
+            (binding.warmthSlider.progress - 50).toFloat(),
+            (binding.brightnessSlider.progress - 50).toFloat(),
+            binding.saturationSlider.progress / 100f
         )
-        prefs.edit().putString("custom_filters", json).apply()
-        reloadFilters()
-        currentFilterIndex = filters.size - 1
+    }
+
+    // Update the preview as the sliders move, so the look is seen in real time.
+    private fun applyLiveFilter() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val matrix = Filters.matrixFor(editorParams())
+        binding.previewView.setRenderEffect(
+            RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(matrix))
+        )
+    }
+
+    private fun saveFilterEditor() {
+        val params = editorParams()
+        val editIndex = editingIndex
+        if (editIndex != null && editIndex in customParams.indices) {
+            customParams[editIndex] = params
+        } else {
+            customParams.add(params)
+        }
+        saveCustomFilters()
+        rebuildFilterList()
+        val customPos = editIndex ?: (customParams.size - 1)
+        currentFilterIndex = (Filters.standard.size + customPos).coerceIn(0, filters.size - 1)
+        closeFilterEditor()
+    }
+
+    private fun deleteFilterEditor() {
+        val editIndex = editingIndex
+        if (editIndex != null && editIndex in customParams.indices) {
+            customParams.removeAt(editIndex)
+            saveCustomFilters()
+            rebuildFilterList()
+            if (currentFilterIndex >= filters.size) currentFilterIndex = 0
+        }
+        closeFilterEditor()
+    }
+
+    private fun cancelFilterEditor() {
+        closeFilterEditor()
+    }
+
+    private fun closeFilterEditor() {
+        editingIndex = null
+        binding.filterEditor.visibility = View.GONE
+        binding.filterScroll.visibility = View.VISIBLE
         applyPreviewFilter()
         populateFilterPanel()
+    }
+
+    private fun rebuildFilterList() {
+        filters = Filters.standard + customParams.map { Filters.toFilter(it) }
+        if (currentFilterIndex >= filters.size) currentFilterIndex = 0
+    }
+
+    private fun saveCustomFilters() {
+        PreferenceManager.getDefaultSharedPreferences(this).edit()
+            .putString("custom_filters", Filters.toJson(customParams))
+            .apply()
     }
 
     // Bake the chosen look into the saved photo. Runs off the main thread.
@@ -439,7 +504,18 @@ class MainActivity : AppCompatActivity() {
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
 
-            val previewBuilder = Preview.Builder()
+            // Photos are 4:3 (the full sensor). Videos are 16:9. Match the
+            // preview to the same shape so what you see is what you get.
+            val aspect = if (videoMode) {
+                AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+            } else {
+                AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+            }
+            val resolution = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(aspect)
+                .build()
+
+            val previewBuilder = Preview.Builder().setResolutionSelector(resolution)
             if (physId != null) {
                 Camera2Interop.Extender(previewBuilder).setPhysicalCameraId(physId)
             }
@@ -479,7 +555,9 @@ class MainActivity : AppCompatActivity() {
                     imageCapture = null
                     cameraProvider.bindToLifecycle(this, selector, preview, capture)
                 } else {
-                    val icBuilder = ImageCapture.Builder().setFlashMode(flashMode)
+                    val icBuilder = ImageCapture.Builder()
+                        .setFlashMode(flashMode)
+                        .setResolutionSelector(resolution)
                     if (physId != null) {
                         Camera2Interop.Extender(icBuilder).setPhysicalCameraId(physId)
                     }
